@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DeviceStatus {
+  online
+  offline
+}
+
+enum EventLevel {
+  info
+  warn
+  error
+}
+
+enum ActuatorType {
+  led
+  pump
+  fan1
+  fan2
+}
+
+model Device {
+  id        String   @id
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lastStatus DeviceStatus?
+  lastSeenAt DateTime?
+
+  sensorReadings  SensorReading[]
+  actuatorStates  ActuatorState[]
+  actuatorCommands ActuatorCommand[]
+  thresholdRules  ThresholdRule[]
+  schedules       Schedule[]
+  alerts          Alert[]
+  events          DeviceEvent[]
+}
+
+model SensorReading {
+  id        String   @id @default(cuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  timestamp DateTime
+
+  temperature Float?
+  humidity    Float?
+  ec          Float?
+  ph          Float?
+
+  createdAt DateTime @default(now())
+
+  @@index([deviceId, timestamp])
+}
+
+model ActuatorCommand {
+  id        String       @id @default(cuid())
+  deviceId  String
+  device    Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  actuator  ActuatorType
+  timestamp DateTime
+
+  state       Boolean
+  brightness  Int?
+  qos         Int?
+  retained    Boolean?
+
+  createdAt DateTime @default(now())
+
+  @@index([deviceId, actuator, timestamp])
+}
+
+model ActuatorState {
+  id        String       @id @default(cuid())
+  deviceId  String
+  device    Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  actuator  ActuatorType
+  timestamp DateTime
+
+  state      Boolean
+  brightness Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([deviceId, actuator, timestamp])
+}
+
+model ThresholdRule {
+  id        String   @id @default(cuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  key       String   // temperature | humidity | ec | ph
+  min       Float?
+  max       Float?
+  enabled   Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([deviceId, key])
+}
+
+model Schedule {
+  id        String       @id @default(cuid())
+  deviceId  String
+  device    Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  actuator  ActuatorType
+  enabled   Boolean      @default(true)
+
+  // "HH:MM" 로 단순화(추후 cron 확장 가능)
+  startTime String
+  endTime   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([deviceId, actuator])
+}
+
+model Alert {
+  id        String    @id @default(cuid())
+  deviceId  String
+  device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  type      String    // threshold_breach | device_offline | sensor_error ...
+  message   String
+  level     EventLevel
+  timestamp DateTime
+
+  acknowledged Boolean @default(false)
+  ackAt        DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([deviceId, timestamp])
+}
+
+model DeviceEvent {
+  id        String    @id @default(cuid())
+  deviceId  String
+  device    Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  level     EventLevel
+  message   String
+  sensor    String?
+  timestamp DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([deviceId, timestamp])
+}
+
