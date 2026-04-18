@@ -1,5 +1,5 @@
+// package.json (예시)
 {
-<<<<<<< HEAD
   "name": "jhk-frontend",
   "version": "0.1.0",
   "private": true,
@@ -14,27 +14,3 @@
     "react-dom": "^18"
   }
 }
-=======
-  "name": "jkh-backend",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "node --watch src/index.js",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
-  },
-  "dependencies": {
-    "@prisma/client": "^6.16.1",
-    "cors": "^2.8.5",
-    "dotenv": "^17.2.2",
-    "express": "^4.21.2",
-    "mqtt": "^5.15.1",
-    "zod": "^3.25.76"
-  },
-  "devDependencies": {
-    "prisma": "^6.16.1"
-  }
-}
-
->>>>>>> 11668c0fbc212c43a4fda083a78570f510dbafe8
