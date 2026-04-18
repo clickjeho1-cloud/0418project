@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 {
   "name": "jhk-frontend",
   "version": "0.1.0",
@@ -12,4 +13,21 @@
     "react": "^18",
     "react-dom": "^18"
   }
+=======
+// package.json (예시)
+{
+  "name": "jhk-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^14",
+    "react": "^18",
+    "react-dom": "^18"
+  }
+>>>>>>> a7cefd50ee5d352c61047571e8b02a469525d00c
 }
