@@ -1,19 +1,29 @@
-# @babel/runtime
+# jkh-backend
 
-> babel's modular runtime helpers
+## 실행(로컬)
+### 1) DB 실행(PostgreSQL)
+`jkh-infra/docker-compose.yml` 기준.
 
-See our website [@babel/runtime](https://babeljs.io/docs/babel-runtime) for more information.
-
-## Install
-
-Using npm:
-
-```sh
-npm install --save @babel/runtime
+PowerShell:
+```powershell
+cd C:\Users\ds20\Documents\pythonpractice\0409project\jhk\jkh-smartfarm\jkh-infra
+docker compose up -d
 ```
 
-or using yarn:
+### 2) 환경변수 설정
+`.env.example`을 복사해서 `.env`를 만들고 값을 채운다.
 
-```sh
-yarn add @babel/runtime
+### 3) 설치/마이그레이션/실행
+```powershell
+cd C:\Users\ds20\Documents\pythonpractice\0409project\jhk\jkh-smartfarm\jkh-backend
+npm install
+npx prisma generate
+npx prisma migrate dev --name init
+npm run dev
 ```
+
+## 엔드포인트(최소)
+- `GET /api/stream` : SSE(실시간)
+- `GET /api/devices/:deviceId/latest` : 최신 센서(간단)
+- `POST /api/devices/:deviceId/actuators/:actuator/cmd` : 제어 명령 발행(QoS1, retain=false)
+
