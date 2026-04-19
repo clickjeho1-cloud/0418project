@@ -1,16 +1,16 @@
 {
-  "name": "smartfarm-backend",
+  "name": "smartfarm-frontend",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node src/app.js"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.2",
     "mqtt": "^5.10.0",
-    "zod": "^3.24.1",
-    "@prisma/client": "^6.0.0"
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   }
 }
