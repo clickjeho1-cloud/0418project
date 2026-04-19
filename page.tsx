@@ -1,301 +1,184 @@
-"use client";
+'use client'
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-} from "chart.js";
-import { Line } from "react-chartjs-2";
+import { useEffect, useRef, useState, useCallback } from 'react'
+import mqtt from 'mqtt'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
-
-type Telemetry = {
-  temperature?: number;
-  humidity?: number;
-  ec?: number;
-  ph?: number;
-  timestamp: number;
-  device_id: string;
-};
-
-type AlertMsg = {
-  device_id: string;
-  type: string;
-  breaches: Array<{ key: string; value: number; bound: "min" | "max"; limit: number }>;
-  timestamp: number;
-};
-
-type Actuator = "led" | "pump" | "fan1" | "fan2";
-
-function getEnv(name: string, fallback: string) {
-  const v = process.env[name];
-  return v && v.length > 0 ? v : fallback;
+interface SensorData {
+  temp: number | null
+  humi: number | null
+  timestamp: string
 }
 
-export default function DashboardPage() {
-  const backendUrl = useMemo(
-    () => getEnv("NEXT_PUBLIC_BACKEND_URL", "http://localhost:4000"),
-    [],
-  );
-  const deviceId = useMemo(() => getEnv("NEXT_PUBLIC_DEVICE_ID", "arduino_uno_r4_001"), []);
+export default function Page() {
+  const [data, setData] = useState<SensorData>({
+    temp: null,
+    humi: null,
+    timestamp: '',
+  })
+  const [status, setStatus] = useState('연결중...')
 
-  const [connected, setConnected] = useState(false);
-  const [latest, setLatest] = useState<Telemetry | null>(null);
-  const [series, setSeries] = useState<Telemetry[]>([]);
-  const [alert, setAlert] = useState<AlertMsg | null>(null);
-  const esRef = useRef<EventSource | null>(null);
+  const tempBuffer = useRef<number[]>([])
+  const humiBuffer = useRef<number[]>([])
+  const clientRef = useRef<mqtt.MqttClient | null>(null)
+
+  const filterData = useCallback(
+    (newTemp: string, newHumi: string) => {
+      const tempNum = parseFloat(newTemp)
+      const humiNum = parseFloat(newHumi)
+
+      if (
+        isNaN(tempNum) ||
+        isNaN(humiNum) ||
+        tempNum < -10 ||
+        tempNum > 60 ||
+        humiNum < 0 ||
+        humiNum > 100
+      ) {
+        return false
+      }
+
+      tempBuffer.current.push(tempNum)
+      humiBuffer.current.push(humiNum)
+      if (tempBuffer.current.length > 10) tempBuffer.current.shift()
+      if (humiBuffer.current.length > 10) humiBuffer.current.shift()
+
+      const tempSlice = tempBuffer.current.slice(-5)
+      const humiSlice = humiBuffer.current.slice(-5)
+
+      const avgTemp =
+        tempSlice.reduce((a, b) => a + b, 0) / Math.min(5, tempSlice.length)
+      const avgHumi =
+        humiSlice.reduce((a, b) => a + b, 0) / Math.min(5, humiSlice.length)
+
+      const lastTemp = data.temp ?? avgTemp
+      const lastHumi = data.humi ?? avgHumi
+
+      if (Math.abs(avgTemp - lastTemp) > 5 || Math.abs(avgHumi - lastHumi) > 10) {
+        return false
+      }
+
+      return {
+        temp: avgTemp.toFixed(1),
+        humi: avgHumi.toFixed(1),
+      }
+    },
+    [data.temp, data.humi]
+  )
 
   useEffect(() => {
-    const es = new EventSource(`${backendUrl}/api/stream`);
-    esRef.current = es;
+    const mqttUrl = process.env.NEXT_PUBLIC_MQTT_URL
+    const mqttUsername = process.env.NEXT_PUBLIC_MQTT_USERNAME
+    const mqttPassword = process.env.NEXT_PUBLIC_MQTT_PASSWORD
 
-    es.addEventListener("hello", () => setConnected(true));
-    es.addEventListener("telemetry", (e) => {
-      try {
-        const t = JSON.parse((e as MessageEvent).data) as Telemetry;
-        if (t.device_id !== deviceId) return;
-        setLatest(t);
-        setSeries((prev) => {
-          const next = [...prev, t];
-          return next.slice(-120); // 최근 120포인트만 유지(예: 3초 주기면 약 6분)
-        });
-      } catch {}
-    });
-    es.addEventListener("alert", (e) => {
-      try {
-        const a = JSON.parse((e as MessageEvent).data) as AlertMsg;
-        if (a.device_id !== deviceId) return;
-        setAlert(a);
-      } catch {}
-    });
+    if (!mqttUrl) {
+      setStatus('MQTT_URL 누락')
+      return
+    }
 
-    es.onerror = () => {
-      setConnected(false);
-    };
+    const client = mqtt.connect(mqttUrl, {
+      username: mqttUsername,
+      password: mqttPassword,
+      clientId: `vercel_dashboard_${Math.random().toString(16).slice(2, 10)}`,
+      reconnectPeriod: 5000,
+    })
+
+    clientRef.current = client
+
+    client.on('connect', () => {
+      setStatus('연결됨 ✅')
+      client.subscribe('temp1', { qos: 1 })
+      client.subscribe('humi1', { qos: 1 })
+    })
+
+    client.on('message', (topic, message) => {
+      const value = message.toString()
+
+      if (topic === 'temp1') {
+        const filtered = filterData(value, String(data.humi ?? 0))
+        if (filtered) {
+          setData(prev => ({
+            ...prev,
+            temp: Number(filtered.temp),
+            timestamp: new Date().toLocaleString('ko-KR'),
+          }))
+        }
+      }
+
+      if (topic === 'humi1') {
+        const filtered = filterData(String(data.temp ?? 0), value)
+        if (filtered) {
+          setData(prev => ({
+            ...prev,
+            humi: Number(filtered.humi),
+            timestamp: new Date().toLocaleString('ko-KR'),
+          }))
+        }
+      }
+    })
+
+    client.on('error', (err) => {
+      setStatus('연결 오류: ' + err.message)
+    })
 
     return () => {
-      es.close();
-      esRef.current = null;
-    };
-  }, [backendUrl, deviceId]);
-
-  const labels = useMemo(() => series.map((t) => new Date(t.timestamp).toLocaleTimeString()), [series]);
-
-  const chartData = useMemo(
-    () => ({
-      labels,
-      datasets: [
-        {
-          label: "온도(°C)",
-          data: series.map((t) => t.temperature ?? null),
-          borderColor: "rgb(239, 68, 68)",
-          backgroundColor: "rgba(239, 68, 68, 0.2)",
-          spanGaps: true,
-        },
-        {
-          label: "습도(%)",
-          data: series.map((t) => t.humidity ?? null),
-          borderColor: "rgb(59, 130, 246)",
-          backgroundColor: "rgba(59, 130, 246, 0.2)",
-          spanGaps: true,
-        },
-        {
-          label: "EC",
-          data: series.map((t) => t.ec ?? null),
-          borderColor: "rgb(34, 197, 94)",
-          backgroundColor: "rgba(34, 197, 94, 0.2)",
-          spanGaps: true,
-        },
-        {
-          label: "pH",
-          data: series.map((t) => t.ph ?? null),
-          borderColor: "rgb(168, 85, 247)",
-          backgroundColor: "rgba(168, 85, 247, 0.2)",
-          spanGaps: true,
-        },
-      ],
-    }),
-    [labels, series],
-  );
-
-  const chartOptions = useMemo(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false as const,
-      plugins: {
-        legend: { position: "top" as const },
-        title: { display: false },
-      },
-      scales: {
-        y: { ticks: { maxTicksLimit: 6 } },
-        x: { ticks: { maxTicksLimit: 8 } },
-      },
-    }),
-    [],
-  );
-
-  async function sendCmd(actuator: Actuator, cmd: { state: boolean; brightness?: number }) {
-    const payload = {
-      ...cmd,
-      timestamp: Date.now(),
-    };
-    await fetch(`${backendUrl}/api/devices/${deviceId}/actuators/${actuator}/cmd`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-  }
+      client.end(true)
+      clientRef.current = null
+    }
+  }, [filterData, data.temp, data.humi])
 
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto" }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "baseline", marginBottom: 12 }}>
-        <h2 style={{ margin: 0 }}>JKH 스마트팜 대시보드</h2>
-        <div style={{ fontSize: 13, color: connected ? "#16a34a" : "#dc2626" }}>
-          {connected ? "SSE 연결됨" : "연결 끊김"}
-        </div>
-        <div style={{ fontSize: 13, color: "#6b7280" }}>device_id: {deviceId}</div>
-      </div>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-8">
+      <div className="mx-auto max-w-4xl">
+        <h1 className="mb-12 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-center text-4xl font-bold text-transparent">
+          🌱 스마트팜 대시보드
+        </h1>
 
-      {alert && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 50,
-          }}
-          onClick={() => setAlert(null)}
-        >
-          <div
-            style={{ background: "white", borderRadius: 12, width: "min(560px, 100%)", padding: 16 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-              <h3 style={{ margin: 0, color: "#b45309" }}>경고: 임계값 이탈</h3>
-              <button
-                style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: "6px 10px", cursor: "pointer" }}
-                onClick={() => setAlert(null)}
-              >
-                닫기
-              </button>
-            </div>
-            <div style={{ marginTop: 10, fontSize: 14, color: "#374151" }}>
-              <div style={{ marginBottom: 8 }}>
-                발생 시각: {new Date(alert.timestamp).toLocaleString()}
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-2xl border border-white/50 bg-white/80 p-8 shadow-xl backdrop-blur-xl transition-all hover:shadow-2xl">
+            <div className="text-center">
+              <div className="mb-4 text-5xl">🌡️</div>
+              <div className="mb-2 text-4xl font-black text-blue-600">
+                {data.temp ?? '--.--'}
               </div>
-              <ul style={{ margin: 0, paddingLeft: 18 }}>
-                {alert.breaches.map((b, idx) => (
-                  <li key={idx}>
-                    {b.key}: {b.value} (기준 {b.bound}={b.limit})
-                  </li>
-                ))}
-              </ul>
+              <div className="text-lg font-medium text-gray-600">온도 (°C)</div>
             </div>
-            <div style={{ marginTop: 12, fontSize: 12, color: "#6b7280" }}>
-              * 임계값은 백엔드 DB의 threshold_rules 기반입니다.
+          </div>
+
+          <div className="rounded-2xl border border-white/50 bg-white/80 p-8 shadow-xl backdrop-blur-xl transition-all hover:shadow-2xl">
+            <div className="text-center">
+              <div className="mb-4 text-5xl">💧</div>
+              <div className="mb-2 text-4xl font-black text-green-600">
+                {data.humi ?? '--.--'}
+              </div>
+              <div className="text-lg font-medium text-gray-600">습도 (%)</div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white/50 bg-white/80 p-8 shadow-xl backdrop-blur-xl">
+            <div className="text-center">
+              <div className="mb-4 text-2xl font-bold">{status}</div>
+              <div className="text-sm text-gray-500">
+                마지막 업데이트
+                <br />
+                {data.timestamp || '-'}
+              </div>
+              <div className="mt-4 rounded-xl bg-gray-100 p-3 text-xs">
+                HiveMQ Cloud
+                <br />
+                temp1 / humi1
+              </div>
             </div>
           </div>
         </div>
-      )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-        <Card title="온도" value={latest?.temperature} unit="°C" />
-        <Card title="습도" value={latest?.humidity} unit="%" />
-        <Card title="EC" value={latest?.ec} unit="" />
-        <Card title="pH" value={latest?.ph} unit="" />
-      </div>
-
-      <div style={{ marginTop: 12, border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-        <div style={{ height: 320 }}>
-          <Line data={chartData} options={chartOptions} />
+        <div className="mt-12 rounded-xl bg-white/60 p-6 backdrop-blur-xl">
+          <h3 className="mb-4 font-bold">📊 최근 데이터 로그</h3>
+          <pre className="max-h-40 overflow-auto rounded bg-gray-900 p-4 text-xs text-green-400">
+            {data.timestamp &&
+              `✅ 안정화: T${data.temp}°C H${data.humi}% (${data.timestamp})`}
+          </pre>
         </div>
       </div>
-
-      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-        <ActuatorCard
-          title="LED"
-          onOn={() => sendCmd("led", { state: true, brightness: 80 })}
-          onOff={() => sendCmd("led", { state: false })}
-        />
-        <ActuatorCard title="펌프" onOn={() => sendCmd("pump", { state: true })} onOff={() => sendCmd("pump", { state: false })} />
-        <ActuatorCard title="팬1" onOn={() => sendCmd("fan1", { state: true })} onOff={() => sendCmd("fan1", { state: false })} />
-        <ActuatorCard title="팬2" onOn={() => sendCmd("fan2", { state: true })} onOff={() => sendCmd("fan2", { state: false })} />
-      </div>
-
-      <div style={{ marginTop: 12, fontSize: 12, color: "#6b7280" }}>
-        경고창은 백엔드가 임계값(threshold_rules) 이탈을 감지해 SSE의 <code>alert</code> 이벤트로 전송하면 뜹니다.
-      </div>
     </div>
-  );
+  )
 }
-
-function Card({ title, value, unit }: { title: string; value: number | undefined; unit: string }) {
-  return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-      <div style={{ fontSize: 12, color: "#6b7280" }}>{title}</div>
-      <div style={{ marginTop: 6, fontSize: 22, fontWeight: 700 }}>
-        {typeof value === "number" ? value.toFixed(1) : "-"}{" "}
-        <span style={{ fontSize: 12, fontWeight: 500, color: "#6b7280" }}>{unit}</span>
-      </div>
-    </div>
-  );
-}
-
-function ActuatorCard({
-  title,
-  onOn,
-  onOff,
-}: {
-  title: string;
-  onOn: () => void;
-  onOff: () => void;
-}) {
-  return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-      <div style={{ fontSize: 12, color: "#6b7280" }}>{title}</div>
-      <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-        <button
-          style={{
-            flex: 1,
-            border: "1px solid #16a34a",
-            background: "#16a34a",
-            color: "white",
-            borderRadius: 10,
-            padding: "8px 10px",
-            cursor: "pointer",
-          }}
-          onClick={onOn}
-        >
-          ON
-        </button>
-        <button
-          style={{
-            flex: 1,
-            border: "1px solid #dc2626",
-            background: "#dc2626",
-            color: "white",
-            borderRadius: 10,
-            padding: "8px 10px",
-            cursor: "pointer",
-          }}
-          onClick={onOff}
-        >
-          OFF
-        </button>
-      </div>
-    </div>
-  );
-}
-
