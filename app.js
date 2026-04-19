@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 
@@ -8,7 +9,7 @@ app.use(
   cors({
     origin: process.env.SSE_ORIGIN || true,
     credentials: false,
-  }),
+  })
 );
 
 app.get("/api/health", (req, res) => {
